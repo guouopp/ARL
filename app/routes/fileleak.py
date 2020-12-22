@@ -2,7 +2,7 @@ from flask_restplus import Resource, Api, reqparse, fields, Namespace
 from app.utils import get_logger, auth
 from . import base_query_fields, ARLResource, get_arl_parser
 
-ns = Namespace('fileleak')
+ns = Namespace('fileleak', description="文件泄漏信息")
 
 logger = get_logger()
 
@@ -11,7 +11,7 @@ base_search_fields = {
     'site': fields.String(description="站点"),
     'content_length': fields.Integer(description="body 长度"),
     'status_code': fields.Integer(description="状态码"),
-    'title': fields.Integer(description="标题"),
+    'title': fields.String(description="标题"),
     "task_id": fields.String(description="任务ID")
 }
 

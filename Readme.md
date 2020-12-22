@@ -1,4 +1,8 @@
 ## ARL(Asset Reconnaissance Lighthouse)资产侦察灯塔系统
+[![Python 3.6](https://img.shields.io/badge/python-3.6-yellow.svg)](https://www.python.org/)
+[![Docker Images](https://img.shields.io/docker/pulls/tophant/arl.svg)](https://hub.docker.com/r/tophant/arl)
+[![Github Issues](https://img.shields.io/github/issues/TophantTechnology/ARL.svg)](https://github.com/TophantTechnology/ARL/issues)
+[![Github Stars](https://img.shields.io/github/stars/TophantTechnology/ARL.svg)](https://github.com/TophantTechnology/ARL/stargazers)
 
 资产灯塔，不仅仅是域名收集
 
@@ -19,17 +23,16 @@
 docker pull tophant/arl
 ```
 
-修改`docker/docker-compose.yml` 中services web image 和 services worker image 对应的镜像地址。
-
-
+docker-compose 启动
 ```
 git clone https://github.com/TophantTechnology/ARL
 cd ARL/docker/
 docker-compose up -d 
 ```
+详细说明可以参考: [Docker 环境安装 ARL](https://github.com/TophantTechnology/ARL/wiki/Docker-%E7%8E%AF%E5%A2%83%E5%AE%89%E8%A3%85-ARL)
 
 ### 截图
-登录页面，默认用户名密码admin/arlpass  
+登录页面，默认端口5003, 默认用户名密码admin/arlpass  
 ![登录页面](./image/login.png)
 
 任务页面
@@ -41,7 +44,9 @@ docker-compose up -d
 站点页面
 ![站点页面](./image/site.png)
 
-
+资产监控页面
+![资产监控页面](./image/monitor.png)
+详细说明可以参考：[资产分组和监控功能使用说明](https://github.com/TophantTechnology/ARL/wiki/%E8%B5%84%E4%BA%A7%E5%88%86%E7%BB%84%E5%92%8C%E7%9B%91%E6%8E%A7%E5%8A%9F%E8%83%BD%E4%BD%BF%E7%94%A8%E8%AF%B4%E6%98%8E)
 
 ### 任务选项说明
 | 编号 |      选项      |                                       说明                                        |
@@ -78,15 +83,21 @@ docker-compose up -d
 | ARL.AUTH          | 是否开启认证，不开启有安全风险          |
 | ARL.API_KEY       | arl后端API调用key，如果设置了请注意保密 |
 | ARL.BLACK_IPS     | 为了防止SSRF，屏蔽的IP地址或者IP段      |
+| ARL.PORT_TOP_10     | 自定义端口，对应前端端口测试选项      |
+| ARL.DOMAIN_DICT     | 域名爆破字典，对应前端大字典选项      |
+| ARL.FILE_LEAK_DICT     | 文件泄漏字典      |
 
 
 
-### 密码修改
+### 密码重置
 
+可以执行下面的命令，然后使用 `admin/admin123` 就可以登录了。
 ```
 docker exec -ti arl_mongodb mongo -u admin -p admin
+use arl
+db.user.drop()
+db.user.insert({ username: 'admin',  password: hex_md5('arlsalt!@#'+'admin123') })
 ```
-使用`use arl`切换数据库，复制docker目录下的mongo-init.js文件的内容执行进行修改密码。
 
 
 ### 本地安装
@@ -124,7 +135,14 @@ alien -i nmap-7.80-1.x86_64.rpm
 rpm -vhU https://nmap.org/dist/nmap-7.80-1.x86_64.rpm
 ```
 
+#### 配置RabbitMQ
 
+```
+rabbitmqctl add_user arl arlpassword
+rabbitmqctl add_vhost arlv2host
+rabbitmqctl set_user_tags arl arltag
+rabbitmqctl set_permissions -p arlv2host arl ".*" ".*" ".*"
+```
 
 ### 本地编译Docker镜像 并启动
 
@@ -144,4 +162,4 @@ docker-compose up -d
 ### 写在最后
 
 目前ARL仅仅只是完成了对资产的部分维度的发现和收集，自动发现过程中难免出现覆盖度不全、不精准、不合理等缺陷的地方还请反馈至我们。  
-后续还有更多有意思的功能，如资产管理、监控部分等功能，敬请期待。 
+

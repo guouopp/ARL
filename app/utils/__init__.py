@@ -2,6 +2,8 @@ import subprocess
 import shlex
 import random
 import string
+import psutil
+import os
 import re
 import hashlib
 from celery.utils.log import get_task_logger
@@ -11,12 +13,13 @@ import dns.resolver
 from tld import get_tld
 from .conn import http_req, conn_db
 from .http import get_title, get_headers
-from .domain import check_domain_black, is_valid_domain
+from .domain import check_domain_black, is_valid_domain, is_in_scope, is_in_scopes
 from .ip import is_vaild_ip_target, not_in_black_ips, get_ip_asn, get_ip_city, get_ip_type
-from .arl import arl_domain
-from .time import curr_date
-from .url import rm_similar_url, get_hostname, normal_url, same_netloc, verify_cert
+from .arl import arl_domain, get_asset_domain_by_id
+from .time import curr_date, time2date, curr_date_obj
+from .url import rm_similar_url, get_hostname, normal_url, same_netloc, verify_cert, url_ext
 from .cert import get_cert
+from .arlupdate import arl_update
 
 def load_file(path):
     with open(path, "r+", encoding="utf-8") as f:
@@ -93,6 +96,8 @@ def get_ip(domain, log_flag = True):
     try:
         answers = dns.resolver.query(domain, 'A')
         for rdata in answers:
+            if rdata.address == '0.0.0.1':
+                continue
             ips.append(rdata.address)
     except dns.resolver.NXDOMAIN as e:
         if log_flag:
@@ -141,7 +146,7 @@ def domain_parsed(domain, fail_silently = True):
 def get_fld(domain):
     res = domain_parsed(domain)
     if res:
-        return  res["fld"]
+        return res["fld"]
 
 
 
@@ -151,8 +156,44 @@ def gen_filename(site):
     return re.sub('[^\w\-_\. ]', '_', filename)
 
 
+def build_ret(error, data):
+    ret = {}
+    ret.update(error)
+    ret["data"] = data
+    msg = error["message"]
 
-from .user import user_login, user_login_header, auth, user_logout
+    if error["code"] != 200:
+        for k in data:
+            if k.endswith("id"):
+                continue
+            msg += " {}:{}".format(k, data[k])
+
+    ret["message"] = msg
+    return ret
+
+
+def kill_child_process(pid):
+    logger = get_logger()
+    parent = psutil.Process(pid)
+    for child in parent.children(recursive=True):
+        logger.info("kill child_process {}".format(child))
+        child.kill()
+
+
+
+
+def exit_gracefully(signum, frame):
+    logger = get_logger()
+    logger.info('Receive signal {} frame {}'.format(signum, frame))
+    pid = os.getpid()
+    kill_child_process(pid)
+    parent = psutil.Process(pid)
+    logger.info("kill self {}".format(parent))
+    parent.kill()
+
+
+from .user import user_login, user_login_header, auth, user_logout, change_pass
+
 
 
 

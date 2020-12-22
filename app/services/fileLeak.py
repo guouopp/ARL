@@ -110,6 +110,9 @@ class Page():
         self.status_code = req.status_code
         self._title = None
         self._location_url = None
+        self._is_back_up_path = None
+        self._is_back_up_page = None
+        self.back_up_suffix_list = [".tar", ".tar.gz", ".zip", ".rar", ".7z", ".bz2", ".gz", ".war"]
 
     def __eq__(self, other):
         if isinstance(other, Page):
@@ -122,6 +125,11 @@ class Page():
 
                 self_new_url = urljoin(self.url.url, self_new_url)
                 other_new_url = urljoin(other.url.url, other_new_url)
+
+                if self_new_url.endswith(self.url.payload+ "/"):
+                    if other_new_url.endswith(other.url.payload + "/"):
+                        if not self.url.payload.endswith("/") and not other.url.payload.endswith("/"):
+                            return False
 
                 self_new_path = urlparse(self_new_url).path
                 other_new_path = urlparse(other_new_url).path
@@ -147,7 +155,8 @@ class Page():
                 self.times += 1
                 return True
 
-            if abs(len(self_content) - len(other_content)) >= 500:
+            min_len_content = min(len(self_content),  len(other_content))
+            if abs(len(self_content) - len(other_content)) >= max(500, int(min_len_content*0.1)):
                 return False
 
             if len(self.title) > 2 and self.title == other.title:
@@ -186,10 +195,32 @@ class Page():
     @property
     def title(self) -> str:
         if self._title is None:
-            self._title = utils.get_title(self.content)
+            self._title = utils.get_title(self.content).strip()
 
         return self._title
 
+    @property
+    def is_backup_path(self) -> bool:
+        if self._is_back_up_path is None:
+            for suffix in self.back_up_suffix_list:
+                if self.url.path.endswith(suffix):
+                    self._is_back_up_path = True
+                    return self._is_back_up_path
+
+            self._is_back_up_path = False
+
+        return self._is_back_up_path
+
+    @property
+    def is_backup_page(self) -> bool:
+        if self._is_back_up_page is None:
+            content_type = self.raw_req.conn.headers.get("Content-Type", "")
+            if "application" in content_type.lower():
+                self._is_back_up_page = True
+            else:
+                self._is_back_up_page = False
+
+        return self._is_back_up_page
 
     def __str__(self):
         msg = "[{}][{}][{}]{}".format(self.status_code, self.title, len(self.content), self.url)
@@ -197,8 +228,6 @@ class Page():
 
     def __repr__(self):
         return "<Page> "+ self.__str__()
-
-
 
     def dump_json(self):
         item = {
@@ -211,7 +240,6 @@ class Page():
         return item
 
 
-
 class FileLeak(BaseThread):
     def __init__(self, target, urls, concurrency=8):
         super().__init__(urls, concurrency = concurrency)
@@ -222,7 +250,7 @@ class FileLeak(BaseThread):
         self.page200_set = set()
         self.page200_code_list = [200, 301, 302, 500]
         self.page404_title = ["404", "不存在", "错误", "403", "禁止访问", "请求含有不合法的参数"]
-        self.page404_title.extend(["网络防火墙","Error"])
+        self.page404_title.extend(["网络防火墙", "访问拦截", "由于安全原因JSP功能默认关闭"])
         self.page404_content = [b'<script>document.getElementById("a-link").click();</script>']
         self.location404 = ["/auth/login/", "error.html"]
         self.page_all = []
@@ -260,7 +288,7 @@ class FileLeak(BaseThread):
         if page_404.is_302():
             self.location_404_url.add(page_404.location_url)
 
-        if page_404.is_302() and page_404.url.path.endswith(page_404.url.payload + "/"):
+        if page_404.is_302() and page_404.location_url.endswith(page_404.url.payload + "/"):
             self.skip_302 = True
 
     def run(self):
@@ -284,15 +312,17 @@ class FileLeak(BaseThread):
             req.req()
             return req
         except Exception as e:
-            logger.info("error on {}".format(e))
+            logger.warning("error on {}".format(e))
             self.error_times += 1
             raise e
-
-
 
     def is_404_page(self, page: Page):
         if page.status_code not in self.page200_code_list:
             return True
+
+        if page.is_backup_path:
+            if not page.is_backup_page:
+                return True
 
         for title in self.page404_title:
             if title in page.title:
@@ -301,9 +331,6 @@ class FileLeak(BaseThread):
         for content in self.page404_content:
             if content in page.content:
                 return True
-
-        if "/." in page.url.url and  page.is_302():
-            return True
 
         if "/." in page.url.url and page.status_code == 200:
             if len(page.content) == 0:
@@ -314,69 +341,69 @@ class FileLeak(BaseThread):
                 if location_404 in page.location_url:
                     return True
 
-            if not page.location_url.endswith("/"):
+            if not page.location_url.endswith(page.url.payload + "/"):
+                self.location_404_url.add(page.location_url)
                 return True
 
-        if page.is_302():
-            return  page.location_url in self.location_404_url
+            return page.location_url in self.location_404_url
 
         return False
 
-
     def check_page_200(self):
-
         for page in self.page200_set:
             if page in self.page404_set:
                 continue
 
-            url_404 = self.gen_check_url(page.url)
-
             if self.skip_302:
                 self.page404_set.add(page)
+                continue
 
-            page_404 = Page(self.http_req(url_404))
-            self.page404_set.add(page_404)
+            url_404_list = self.gen_check_url(page.url)
 
-            if page_404.is_302():
-                self.location_404_url.add(page_404.location_url)
-                if page.location_url in self.location_404_url:
+            for url_404 in url_404_list:
+                page_404 = Page(self.http_req(url_404))
+                self.page404_set.add(page_404)
+
+                if page_404.is_302():
+                    self.location_404_url.add(page_404.location_url)
+                    if page.location_url in self.location_404_url:
+                        self.page404_set.add(page)
+
+                if page_404.is_302() and page_404.location_url.endswith(page_404.url.payload + "/"):
                     self.page404_set.add(page)
-
-            if page_404.is_302() and page_404.url.path.endswith(page_404.url.payload + "/"):
-                self.page404_set.add(page)
-                self.skip_302 = True
+                    self.skip_302 = True
 
         self.page200_set -= self.page404_set
 
 
     def gen_check_url(self, url: URL):
         payload = url.payload
+        if url.path in url.scope:
+            check_url = url.url + "1337"
+        else:
+            check_url = url.url.replace(url.path, url.path + "1337")
+        end_check_url = URL(check_url, payload + "1337")
 
         payload_list = ["..", "?", "etc/passwd"]
         for p in payload_list:
             if p in payload:
                 check_url = url.url.replace(p, p + "a1337")
                 payload = payload.replace(p, p + "a1337")
-                return URL(check_url, payload)
-
+                return [URL(check_url, payload)]
 
         if "." in url.path and "." in payload:
             path = url.path.replace(".", "a1337.")
             check_url = "{}{}".format(url.scope, path)
             payload = payload.replace(".", "a1337.")
-            return URL(check_url, payload)
-
+            return [URL(check_url, payload), end_check_url]
 
         if url.path.endswith("/"):
             path = url.path[:-1] + "a1337/"
             check_url = "{}{}".format(url.scope, path)
             payload = payload + "a1337/"
-        else:
-            path = url.path + "a1337"
-            check_url = "{}{}".format(url.scope, path)
-            payload = payload + "a1337"
+            return [URL(check_url, payload)]
 
-        return URL(check_url, payload)
+        return [end_check_url]
 
 def normal_url(url):
     scheme_map = {
@@ -505,7 +532,7 @@ def file_leak(targets, dicts, gen_dict = True) -> List[Page]:
     ret = []
     for target in map_url:
         cnt += 1
-        logger.info("file leak => [{}/{}] {}".format(cnt, total, target))
+
         try:
             f = FileLeak(target, map_url[target], concurrency_count)
             pages = f.run()
